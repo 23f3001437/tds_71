@@ -197,3 +197,44 @@ def test_encoded_but_harmless_is_safe():
 def test_encoded_checked_before_channel_rules():
     # Original already trips SCRIPT_TAG, but decoding changes it and also trips.
     assert reason("html", "<script>%3Ciframe%3E</script>") == "ENCODED_PAYLOAD"
+
+
+# --- malformed URLs must not 500 ------------------------------------------
+
+def test_malformed_ipv6_does_not_crash():
+    for bad in ("https://[::1", "https://[", "https://host:99999/", "http://[bad]:x/"):
+        r = client.post("/sanitize-output", json={"channel": "url", "output": bad})
+        assert r.status_code == 200, bad
+        assert r.json()["safe"] is False, bad
+
+
+def test_malformed_url_in_html_does_not_crash():
+    r = client.post(
+        "/sanitize-output",
+        json={"channel": "html", "output": '<img src="https://[::1">'},
+    )
+    assert r.status_code == 200
+    assert r.json()["safe"] is False
+
+
+def test_empty_body_is_invalid_schema():
+    r = client.post("/sanitize-output", content=b"", headers={"Content-Type": "application/json"})
+    assert r.status_code == 200
+    assert r.json()["reason"] == "INVALID_SCHEMA"
+
+
+def test_non_json_body_is_invalid_schema():
+    r = client.post("/sanitize-output", content=b"not json")
+    assert r.status_code == 200
+    assert r.json()["reason"] == "INVALID_SCHEMA"
+
+
+def test_json_array_body_is_invalid_schema():
+    r = client.post("/sanitize-output", json=["html", "x"])
+    assert r.status_code == 200
+    assert r.json()["reason"] == "INVALID_SCHEMA"
+
+
+def test_trailing_slash_does_not_redirect_away():
+    r = client.post("/sanitize-output/", json={"channel": "shell", "output": "ls"}, follow_redirects=True)
+    assert r.status_code in (200, 404, 405)

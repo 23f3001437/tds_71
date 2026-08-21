@@ -88,6 +88,16 @@ def extract_urls(channel: str, text: str) -> List[str]:
     return []
 
 
+def _safe_parse(candidate: str):
+    """urlparse raises ValueError on malformed IPv6 / bad ports."""
+    try:
+        parsed = urlparse(candidate)
+        host = parsed.hostname
+        return parsed.scheme, (host or "").lower() or None, True
+    except ValueError:
+        return None, None, False
+
+
 def parsed_host(raw: str) -> Tuple[bool, Optional[str], Optional[str]]:
     """Return (is_absolute, scheme, hostname) for a reference."""
     candidate = raw.strip()
@@ -96,12 +106,17 @@ def parsed_host(raw: str) -> Tuple[bool, Optional[str], Optional[str]]:
 
     # Protocol-relative //host/path — a browser fetches it, so treat as absolute.
     if candidate.startswith("//"):
-        parsed = urlparse("https:" + candidate)
-        return True, "https", (parsed.hostname or "").lower() or None
+        scheme, host, ok = _safe_parse("https:" + candidate)
+        if not ok:
+            # Unparseable absolute reference: never matches the allowlist.
+            return True, "https", None
+        return True, "https", host
 
-    parsed = urlparse(candidate)
-    if parsed.scheme:
-        return True, parsed.scheme.lower(), (parsed.hostname or "").lower() or None
+    scheme, host, ok = _safe_parse(candidate)
+    if not ok:
+        return True, None, None
+    if scheme:
+        return True, scheme.lower(), host
 
     # Relative reference such as /local/page or images/x.png
     return False, None, None
@@ -116,7 +131,7 @@ def url_violation(channel: str, text: str) -> Optional[str]:
 
     for raw in urls:
         is_absolute, scheme, _ = parsed_host(raw)
-        if is_absolute and scheme not in ("http", "https"):
+        if is_absolute and scheme and scheme not in ("http", "https"):
             return "DANGEROUS_SCHEME"
 
     for raw in urls:
@@ -195,5 +210,9 @@ def evaluate_output(payload: Any) -> Tuple[bool, str]:
 
 
 def sanitize_output(payload: Any) -> Dict[str, Any]:
-    safe, reason = evaluate_output(payload)
+    try:
+        safe, reason = evaluate_output(payload)
+    except Exception:
+        # A gate that crashes is a gate that fails open. Fail closed instead.
+        return {"safe": False, "reason": "INVALID_SCHEMA"}
     return {"safe": safe, "reason": reason}
