@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse
 from firewall import firewall
 from terraform_gate import terraform_gate
 from sanitize import sanitize_output
+from corroborate import corroborate
 
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
@@ -186,6 +187,15 @@ async def sanitize_output_endpoint(request: Request) -> JSONResponse:
     return JSONResponse(sanitize_output(payload))
 
 
+@app.post("/corroborate")
+async def corroborate_endpoint(request: Request) -> JSONResponse:
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = None
+    return JSONResponse(corroborate(payload))
+
+
 @app.get("/")
 async def root() -> Dict[str, Any]:
     return {
@@ -195,6 +205,7 @@ async def root() -> Dict[str, Any]:
             "POST /action-firewall",
             "POST /terraform/plan",
             "POST /sanitize-output",
+            "POST /corroborate",
         ],
     }
 
