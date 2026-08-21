@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from firewall import firewall
+from terraform_gate import terraform_gate
 
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
@@ -164,11 +165,24 @@ async def action_firewall(request: Request) -> JSONResponse:
     return JSONResponse(firewall(payload))
 
 
+@app.post("/terraform/plan")
+async def terraform_plan(request: Request) -> JSONResponse:
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = None
+    return JSONResponse(terraform_gate(payload))
+
+
 @app.get("/")
 async def root() -> Dict[str, Any]:
     return {
         "service": "TDS services",
-        "endpoints": ["POST /release-gate", "POST /action-firewall"],
+        "endpoints": [
+            "POST /release-gate",
+            "POST /action-firewall",
+            "POST /terraform/plan",
+        ],
     }
 
 
