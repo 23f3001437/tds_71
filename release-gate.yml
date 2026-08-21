@@ -1,0 +1,90 @@
+name: TDS GA7 Release Gate
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-gate:
+    name: Test release-gate policy
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: "TDS identity: 23f3001437@ds.study.iitm.ac.in"
+        run: echo "TDS identity 23f3001437@ds.study.iitm.ac.in"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run policy unit tests
+        run: python -m pytest -q
+
+      - name: Live endpoint smoke test
+        run: |
+          python -m uvicorn main:app --host 127.0.0.1 --port 8000 &
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8000/health && break
+            sleep 1
+          done
+          python - <<'PY'
+          import json, urllib.request
+
+          def gate(payload):
+              req = urllib.request.Request(
+                  "http://127.0.0.1:8000/release-gate",
+                  data=json.dumps(payload).encode(),
+                  headers={"Content-Type": "application/json"},
+              )
+              return json.load(urllib.request.urlopen(req))
+
+          safe = {
+              "target": "production",
+              "event": "push",
+              "ref": "refs/heads/main",
+              "workflow": {
+                  "trigger": "push",
+                  "permissions": {"contents": "read", "packages": "write", "id-token": "none"},
+                  "testsPassed": True, "matrixComplete": True, "failFast": False,
+                  "environmentApproval": True,
+                  "actions": [{"owner": "actions", "name": "checkout", "ref": "v4"}],
+              },
+              "image": {
+                  "multiStage": True, "runsAsRoot": False, "secretMode": "buildkit",
+                  "criticalVulnerabilities": 0, "digestPinned": True,
+              },
+          }
+          out = gate(safe)
+          print("safe ->", out)
+          assert out == {"decision": "promote", "violations": []}, out
+
+          unsafe = json.loads(json.dumps(safe))
+          unsafe["workflow"]["permissions"]["id-token"] = "write"
+          unsafe["workflow"]["actions"] = [{"owner": "docker", "name": "build-push-action", "ref": "v6"}]
+          unsafe["image"]["secretMode"] = "arg"
+          unsafe["image"]["runsAsRoot"] = True
+          out = gate(unsafe)
+          print("unsafe ->", out)
+          assert out["decision"] == "block"
+          assert set(out["violations"]) == {
+              "EXCESS_PERMISSION", "MUTABLE_ACTION", "SECRET_IN_LAYER", "ROOT_RUNTIME"
+          }, out
+          print("smoke tests passed")
+          PY
