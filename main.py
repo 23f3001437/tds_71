@@ -13,6 +13,8 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from firewall import firewall
+
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 # Exactly least privilege for a release.
@@ -153,9 +155,21 @@ async def release_gate(request: Request) -> JSONResponse:
     )
 
 
+@app.post("/action-firewall")
+async def action_firewall(request: Request) -> JSONResponse:
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = None
+    return JSONResponse(firewall(payload))
+
+
 @app.get("/")
 async def root() -> Dict[str, Any]:
-    return {"service": "TDS GA7 Release Gate", "endpoint": "POST /release-gate"}
+    return {
+        "service": "TDS services",
+        "endpoints": ["POST /release-gate", "POST /action-firewall"],
+    }
 
 
 @app.get("/health")
